@@ -1,0 +1,149 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+
+env:
+  NEXT_TELEMETRY_DISABLED: '1'
+
+jobs:
+  validate:
+    name: Lint, typecheck, test, and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996 # v6
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          cache: pnpm
+          node-version-file: .nvmrc
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Audit production dependencies
+        run: pnpm audit --prod --audit-level high
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test:run
+
+      - name: Build
+        run: pnpm build:rehearsal
+
+  database:
+    name: Database-backed tests and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16@sha256:a36250871de0833b8757561c72f2477ef1ddd1101afa4e617fb552e0de514c6b
+        env:
+          POSTGRES_DB: vaultmind
+          POSTGRES_PASSWORD: vaultmind
+          POSTGRES_USER: vaultmind
+        options: >-
+          --health-cmd "pg_isready -U vaultmind -d vaultmind"
+          --health-interval 10s
+          --health-retries 5
+          --health-timeout 5s
+        ports:
+          - 5432:5432
+
+    env:
+      DATABASE_URL: postgresql://vaultmind:vaultmind@localhost:5432/vaultmind
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996 # v6
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          cache: pnpm
+          node-version-file: .nvmrc
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run migrations
+        run: pnpm db:migrate
+
+      - name: Verify local readiness
+        env:
+          GITHUB_TOKEN: ci-readiness-placeholder
+          OPENAI_API_KEY: ci-readiness-placeholder
+        run: pnpm run doctor
+
+      - name: Test with PostgreSQL
+        run: pnpm test:run
+
+      - name: Browser end-to-end tests
+        run: pnpm e2e
+
+      - name: Local smoke bundle
+        run: pnpm smoke:local
+
+      - name: Build with PostgreSQL env
+        run: pnpm build:rehearsal
+
+      - name: Boot and probe the production build
+        env:
+          SOURCE_CREDENTIAL_ENCRYPTION_KEY: ci-only-source-credential-encryption-key
+          VAULTMIND_BASE_URL: https://ci.vaultmind.invalid
+        run: |
+          pnpm start > /tmp/vaultmind-next.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error http://127.0.0.1:3000/ > /dev/null; then
+              exit 0
+            fi
+
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              cat /tmp/vaultmind-next.log
+              exit 1
+            fi
+
+            sleep 1
+          done
+
+          cat /tmp/vaultmind-next.log
+          exit 1

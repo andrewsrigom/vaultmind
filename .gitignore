@@ -1,0 +1,44 @@
+# dependencies
+node_modules/
+
+# next
+.next/
+next-env.d.ts
+out/
+
+# env
+.env*
+!.env.example
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# test and build output
+coverage/
+dist/
+playwright-report/
+test-results/
+tsconfig.tsbuildinfo
+
+# local data and private artifacts
+.playwright-mcp/
+*.dump
+*.sql
+!drizzle/migrations/*.sql
+*.sqlite
+*.db
+local-files/
+# ad hoc screenshots belong in docs/screenshots only after review
+/*.png
+
+private-notes/
+private-vault/
+screenshots/private/
+plan.md
+
+# generated
+storybook-static/

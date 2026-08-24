@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16@sha256:a36250871de0833b8757561c72f2477ef1ddd1101afa4e617fb552e0de514c6b
+    container_name: vaultmind-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: vaultmind
+      POSTGRES_PASSWORD: vaultmind
+      POSTGRES_DB: vaultmind
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U vaultmind -d vaultmind']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    ports:
+      - '127.0.0.1:5433:5432'
+    volumes:
+      - vaultmind_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  vaultmind_postgres_data:
